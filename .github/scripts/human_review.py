@@ -66,8 +66,8 @@ THINK = os.environ.get("COOKIE_THINK", "false").lower() in ("1", "true", "yes", 
 # randomised per run within these bounds (see choose_counts): at most MAX of each,
 # at least MIN_TOTAL combined, and never more than the number of distinct blocks
 # (so we never stack several on the same lines).
-MAX_COMMENTS = int(os.environ.get("COOKIE_MAX_COMMENTS", "5"))
-MAX_SUGGESTIONS = int(os.environ.get("COOKIE_MAX_SUGGESTIONS", "5"))
+MAX_COMMENTS = int(os.environ.get("COOKIE_MAX_COMMENTS", "3"))
+MAX_SUGGESTIONS = int(os.environ.get("COOKIE_MAX_SUGGESTIONS", "3"))
 MIN_TOTAL = int(os.environ.get("COOKIE_MIN_TOTAL", "2"))
 # Optional seed for reproducible counts/block-picks (handy in tests); unset = OS entropy.
 RNG = random.Random(os.environ.get("COOKIE_SEED") or None)
@@ -353,7 +353,7 @@ def gen_inline_comment(block: dict) -> str:
         "YOU ARE COOKIE MONSTER. GIMME COOKIE NOW! BOUYANT DUCK BODY FLOAT AWAY FROM COOKIE!"
         "Reply with ONLY the comment text IN CHARACTER."
     )
-    return generate_text("inline-comment", PERSONA, user, temperature=2)
+    return generate_text("inline-comment", PERSONA, user, temperature=1)
 
 
 # --- Component 2: suggested change (two plain-text calls: code, then rationale)
@@ -417,7 +417,7 @@ def gen_verdict(title: str, body: str, files: list[str], direction: str) -> str:
         f"Files: {', '.join(files) or '(none)'}\n"
         f"Description:\n{body or '(none)'}"
     )
-    return generate_text("verdict", PERSONA, user, temperature=3.5)
+    return generate_text("verdict", PERSONA, user, temperature=1)
 
 
 # --- Component 4: benchmark spec table ---------------------------------------
