@@ -56,6 +56,12 @@ REQUEST_TIMEOUT = int(os.environ.get("COOKIE_TIMEOUT", "900"))
 TEMPERATURE = float(os.environ.get("COOKIE_TEMPERATURE", "0.85"))
 MAX_BENCHMARKS = int(os.environ.get("COOKIE_MAX_BENCHMARKS", "5"))
 
+# "Thinking" models (qwen3, etc.) emit a <think> reasoning pass before their
+# answer. On a tiny model with our modest num_predict budgets, that pass eats the
+# whole budget and the actual answer (message.content) comes back empty. Disable
+# reasoning by default so the budget goes to the answer; override COOKIE_THINK=1.
+THINK = os.environ.get("COOKIE_THINK", "false").lower() in ("1", "true", "yes", "on")
+
 # How many inline comments / suggested changes to leave. The actual counts are
 # randomised per run within these bounds (see choose_counts): at most MAX of each,
 # at least MIN_TOTAL combined, and never more than the number of distinct blocks
@@ -273,18 +279,28 @@ def cookie_direction(full_diff: str) -> tuple[str, int, int]:
 
 
 # --- Talking to the model ----------------------------------------------------
+_THINK_TAG = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
 def ollama_chat(system: str, user: str, *, temperature: float, num_predict: int) -> str:
     payload = json.dumps({
         "model": MODEL,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "stream": False,
+        # Turn off the model's reasoning pass (see THINK above) so num_predict is
+        # spent on the answer, not on <think> tokens that we'd only discard.
+        "think": THINK,
         "options": {"temperature": temperature, "num_predict": num_predict, "num_ctx": NUM_CTX},
     }).encode("utf-8")
     req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=payload,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
-        return (json.loads(r.read().decode("utf-8")).get("message") or {}).get("content", "")
+        msg = (json.loads(r.read().decode("utf-8")).get("message") or {})
+    # Prefer the answer; if a thinking model left content empty, fall back to its
+    # reasoning field. Strip any inline <think>…</think> block either way.
+    content = (msg.get("content") or "").strip() or (msg.get("thinking") or "")
+    return _THINK_TAG.sub("", content).strip()
 
 
 def generate_text(stage: str, system: str, user: str, *,

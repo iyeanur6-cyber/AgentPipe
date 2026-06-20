@@ -32,6 +32,13 @@ NUM_PREDICT = int(os.environ.get("REVIEW_NUM_PREDICT", "1024"))
 NUM_CTX = int(os.environ.get("REVIEW_NUM_CTX", "8192"))
 REQUEST_TIMEOUT = int(os.environ.get("REVIEW_TIMEOUT", "900"))
 
+# "Thinking" models (qwen3, etc.) spend a <think> reasoning pass before their
+# answer; on a small model with a limited num_predict budget that pass can eat
+# the whole budget and leave the answer empty. Disable reasoning by default so
+# the budget goes to the answer; override with REVIEW_THINK=1.
+THINK = os.environ.get("REVIEW_THINK", "false").lower() in ("1", "true", "yes", "on")
+_THINK_TAG = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
 VERDICT_PATH = Path(os.environ.get("REVIEW_VERDICT_FILE", "/tmp/review_verdict.txt"))
 REVIEW_BODY_PATH = Path(os.environ.get("REVIEW_BODY_FILE", "/tmp/review_body.md"))
 
@@ -110,6 +117,9 @@ def call_model(prompt: str) -> str:
         "model": MODEL,
         "prompt": prompt,
         "stream": False,
+        # Turn off the model's reasoning pass (see THINK above) so num_predict is
+        # spent on the answer, not on <think> tokens we'd only discard.
+        "think": THINK,
         "options": {"temperature": 0.3, "num_predict": NUM_PREDICT, "num_ctx": NUM_CTX},
     }).encode("utf-8")
     req = urllib.request.Request(
@@ -117,7 +127,11 @@ def call_model(prompt: str) -> str:
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-        return json.loads(resp.read().decode("utf-8")).get("response", "")
+        data = json.loads(resp.read().decode("utf-8"))
+    # Prefer the answer; if a thinking model left it empty, fall back to its
+    # reasoning. Strip any inline <think>…</think> block either way.
+    text = (data.get("response") or "").strip() or (data.get("thinking") or "")
+    return _THINK_TAG.sub("", text).strip()
 
 
 def parse_verdict(text: str) -> str:

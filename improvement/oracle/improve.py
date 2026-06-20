@@ -112,7 +112,7 @@ ORACLE_VOICE = (
 
 
 def ollama_generate(messages, *, num_predict=None, temperature=None) -> str:
-    payload = json.dumps({"model": MODEL, "messages": messages, "stream": False,
+    payload = json.dumps({"model": MODEL, "messages": messages, "stream": False, "think": False,
         "options": {
             "temperature": BASE_TEMPERATURE if temperature is None else temperature,
             "top_p": _flt("IMPROVE_TOP_P", "0.9"), "top_k": _int("IMPROVE_TOP_K", "40"),
