@@ -70,7 +70,7 @@ jobs:
           done
 
       - name: Pull model (qwen)
-        run: ollama pull "$MODEL"
+        run: ollama pull "$REVIEW_MODEL"
 
       - name: Generate the review
         env:
