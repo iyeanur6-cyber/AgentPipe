@@ -9,6 +9,7 @@ dependencies = [
   "rich",
   "pydantic",
   "fastapi",
+  "mcp",
   "toml",
   "joml",
   "broml",
