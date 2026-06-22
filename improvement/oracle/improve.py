@@ -276,7 +276,7 @@ def choose_target(generate, tree, inspiration, produced_rels, language) -> Path:
 
     msgs = [
         {"role": "system",
-         "content": ORACLE_VOICE + " Reply with ONE file path under src/ and nothing else."},
+         "content": "Reply with ONE file path under src/ and nothing else."},
         {"role": "user",
          "content": content},
     ]
