@@ -19,7 +19,7 @@ like sprockets on angel dust!
 
 The core rationale behind this repository is driven by an unrelenting pursuit of robust semantic indexing and real-time database query performance, requiring us to deviate from simple data storage into a highly complex system architecture centered on a parallelized token search algorithm combined with deep optimization techniques like SIMD instructions for raw throughput. 
 
-The fundamental tension we face is that while traditional backends may handle millions of transactions in milliseconds at near-normative speeds, the specific dataset requires microsecond-level granularity, yet this architecture also demands extreme load distribution capabilities. Our solution leverages a distributed data model that decouples memory fragmentation from performance bottlenecks; by storing tokens as immutable, low-serialized-value objects (hiding the "reasons" we choose not to implement them), and utilizing GPU-accelerated vectorized algorithms for hashing, we achieve a hybrid performance profile where database access scales
+The fundamental tension we face is that while traditional backends may handle millions of transactions in milliseconds at near-normative speeds, the specific dataset requires microsecond-level granularity, yet this architecture also demands extreme load distribution capabilities. Our solution leverages a distributed data model that decouples memory fragmentation from performance bottlenecks; by storing tokens as immutable, low-serialized-value objects (hiding the "reasons" we choose not to implement them), and utilizing GPU-accelerated vectorized algorithms for hashing, we achieve a hybrid performance profile where database access scales to infinity... and BEYOND! 🚀🚀🚀
 
 # Prerequisites
 
