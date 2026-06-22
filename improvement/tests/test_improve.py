@@ -55,6 +55,68 @@ def test_interleave_alternates_then_trails():
     assert improve._interleave([], [2]) == [2]
 
 
+# --- issue weighting: recency decay + engagement -----------------------------
+from datetime import datetime, timedelta, timezone
+
+NOW = datetime(2026, 6, 21, tzinfo=timezone.utc)
+
+
+def _issue(n, *, days_old=0.0, reactions=0, comments=0, labels=0):
+    created = (NOW - timedelta(days=days_old)).isoformat().replace("+00:00", "Z")
+    return {
+        "number": n, "title": f"t{n}", "body": "", "createdAt": created,
+        "labels": [{"name": f"l{i}"} for i in range(labels)],
+        "comments": [{} for _ in range(comments)],
+        "reactionGroups": [{"content": "THUMBS_UP", "users": {"totalCount": reactions}}],
+    }
+
+
+def test_recency_factor_halves_each_halflife():
+    fresh = improve._recency_factor(_issue(1, days_old=0), now=NOW, halflife_days=14)
+    one_hl = improve._recency_factor(_issue(2, days_old=14), now=NOW, halflife_days=14)
+    two_hl = improve._recency_factor(_issue(3, days_old=28), now=NOW, halflife_days=14)
+    assert fresh == 1.0
+    assert abs(one_hl - 0.5) < 1e-9
+    assert abs(two_hl - 0.25) < 1e-9
+
+
+def test_recency_factor_neutral_without_timestamp_or_halflife():
+    assert improve._recency_factor({}, now=NOW, halflife_days=14) == 1.0
+    assert improve._recency_factor(_issue(1, days_old=99), now=NOW, halflife_days=0) == 1.0
+
+
+def test_activity_sums_reactions_comments_and_labels():
+    assert improve._issue_activity(_issue(1, reactions=3, comments=2, labels=1)) == 6
+    assert improve._issue_activity({}) == 0   # all fields optional
+
+
+def test_weight_blends_recency_and_activity_with_knobs():
+    it = _issue(1, days_old=14, reactions=1)   # recency 0.5, activity 1/1 = 1.0
+    w = improve.issue_weight(it, now=NOW, max_activity=1,
+                             halflife_days=14, recency_weight=2.0, activity_weight=3.0)
+    assert abs(w - (2.0 * 0.5 + 3.0 * 1.0)) < 1e-9
+    # silencing a knob drops that pull entirely
+    only_recency = improve.issue_weight(it, now=NOW, max_activity=1,
+                                        halflife_days=14, recency_weight=1.0, activity_weight=0.0)
+    assert abs(only_recency - 0.5) < 1e-9
+
+
+def test_collect_issue_list_favours_recent_and_active(monkeypatch):
+    # one fresh+busy issue against many stale, quiet ones: it should win the
+    # first slot far more often than uniform chance (1/6) would give.
+    fake = [_issue(0, days_old=0, reactions=10, comments=5, labels=3)] + \
+           [_issue(i, days_old=120) for i in range(1, 6)]
+    monkeypatch.setattr(improve, "_fetch_issues", lambda: fake)
+    firsts = []
+    for seed in range(200):
+        improve._RNG.seed(seed)
+        first = improve.collect_issue_list(now=NOW)[0]
+        firsts.append(int(re.search(r"#(\d+)", first).group(1)))
+    won = firsts.count(0) / len(firsts)
+    assert won > 0.5            # heavily biased toward the hot issue …
+    assert set(firsts) != {0}   # … but not deterministic; the order still wanders
+
+
 # --- path coercion -----------------------------------------------------------
 def test_bare_directory_becomes_a_file(scratch):
     scratch()

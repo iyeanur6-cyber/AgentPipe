@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import ast, json, os, random, re, subprocess, sys, time, urllib.request
+from datetime import datetime, timezone
 from itertools import zip_longest
 from pathlib import Path
 
@@ -24,15 +25,24 @@ MAX_ISSUES            = _int("IMPROVE_MAX_ISSUES", "50")
 MAX_ISSUE_BODY_CHARS  = _int("IMPROVE_MAX_ISSUE_BODY_CHARS", "1000")
 # Each step generates a SMALL bite; truncated files are grown by continuation,
 # not demanded whole in one breath.
-NUM_PREDICT           = _int("IMPROVE_NUM_PREDICT", "512")
+NUM_PREDICT           = _int("IMPROVE_NUM_PREDICT", "1024")
 NUM_CTX               = _int("IMPROVE_NUM_CTX", "8192")
 REQUEST_TIMEOUT       = _int("IMPROVE_TIMEOUT", "600")
-BASE_TEMPERATURE      = _flt("IMPROVE_TEMPERATURE", "1.0")    # — hot. the visions stay strange —
+BASE_TEMPERATURE      = _flt("IMPROVE_TEMPERATURE", "0.5")    # — hot. the visions stay strange —
 REPAIR_TEMPERATURE    = _flt("IMPROVE_REPAIR_TEMPERATURE", "0.5")  # — cooler, to converge —
-MAX_ROUNDS            = _int("IMPROVE_MAX_ROUNDS", "6")   # — grow rounds per file —
-MAX_FILES             = _int("IMPROVE_MAX_FILES", "3")   # — files touched per PR —
+MAX_ROUNDS            = _int("IMPROVE_MAX_ROUNDS", "10")   # — grow rounds per file —
+MAX_FILES             = _int("IMPROVE_MAX_FILES", "10")   # — files touched per PR —
 SRC_PREVIEW_CHARS     = _int("IMPROVE_SRC_PREVIEW_CHARS", "1500")
 GEN_DEADLINE_SECONDS  = _int("IMPROVE_GEN_DEADLINE_SECONDS", "540")  # — under the runner's 10m blade —
+
+# — issue selection weighting: balance freshness against engagement so the loop
+#   stops fixating on the same old issues. A recent issue (soft exponential decay
+#   by half-life) is favoured, and so is a busy one (reactions + comments +
+#   labels); the two pulls are summed, each with its own knob. Set a weight to 0
+#   to silence that pull entirely; set the half-life huge to disable decay. —
+ISSUE_HALFLIFE_DAYS   = _flt("IMPROVE_ISSUE_HALFLIFE_DAYS", "14")    # — age at which recency halves —
+ISSUE_RECENCY_WEIGHT  = _flt("IMPROVE_ISSUE_RECENCY_WEIGHT", "1.0")  # — pull toward fresh issues —
+ISSUE_ACTIVITY_WEIGHT = _flt("IMPROVE_ISSUE_ACTIVITY_WEIGHT", "1.0") # — pull toward busy issues —
 
 CODE_EXTENSIONS = {".py", ".js", ".ts", ".sh", ".cbl", ".cob", ".cpy", ".c", ".h", ".rs", ".toml", ".yaml", ".java" }
 
@@ -69,10 +79,12 @@ def source_files() -> list[tuple[str, str]]:
 
 
 def _fetch_issues() -> list[dict]:
+    # createdAt/updatedAt feed the recency decay; comments + reactionGroups feed
+    # the activity score. All are optional — a missing field degrades to neutral.
     try:
         out = subprocess.run(
             ["gh", "issue", "list", "--state", "open", "--limit", str(MAX_ISSUES),
-             "--json", "number,title,body,labels"],
+             "--json", "number,title,body,labels,createdAt,updatedAt,comments,reactionGroups"],
             capture_output=True, text=True, timeout=60, check=True).stdout
         return json.loads(out or "[]")
     except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
@@ -88,12 +100,73 @@ def _format_issue(it: dict) -> str:
             + (f"\n{body}" if body else ""))
 
 
-def collect_issue_list() -> list[str]:
-    """Open issues, each formatted on its own, in RANDOM order so no single
-    issue is forever first (and forever the only one acted on)."""
-    items = [_format_issue(it) for it in _fetch_issues()]
-    _RNG.shuffle(items)
-    return items
+def _parse_iso(ts: str | None) -> datetime | None:
+    """Parse a GitHub ISO-8601 timestamp ('…Z') into an aware datetime, or None."""
+    if not ts: return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _issue_activity(it: dict) -> int:
+    """How busy an issue is: reactions + comments + labels. Each field is
+    optional and absent ones simply contribute nothing."""
+    reactions = sum((g.get("users") or {}).get("totalCount", 0)
+                    for g in (it.get("reactionGroups") or []))
+    comments = it.get("comments")
+    n_comments = len(comments) if isinstance(comments, list) else int(comments or 0)
+    n_labels = len(it.get("labels") or [])
+    return reactions + n_comments + n_labels
+
+
+def _recency_factor(it: dict, *, now: datetime, halflife_days: float) -> float:
+    """Soft exponential decay on issue age, in (0, 1]: 1.0 the moment it is
+    created, halving every `halflife_days`. Newer issues weigh more. A missing
+    timestamp or a non-positive half-life means 'no decay' (1.0)."""
+    created = _parse_iso(it.get("createdAt") or it.get("updatedAt"))
+    if created is None or halflife_days <= 0: return 1.0
+    age_days = max(0.0, (now - created).total_seconds() / 86400.0)
+    return 0.5 ** (age_days / halflife_days)
+
+
+def issue_weight(it: dict, *, now: datetime, max_activity: int,
+                 halflife_days: float = None, recency_weight: float = None,
+                 activity_weight: float = None) -> float:
+    """Blend recency and engagement into one positive sampling weight. Activity
+    is normalised by the busiest issue in the batch so the two knobs stay on a
+    comparable [0, 1]-ish scale; recency decays with age."""
+    halflife_days = ISSUE_HALFLIFE_DAYS if halflife_days is None else halflife_days
+    recency_weight = ISSUE_RECENCY_WEIGHT if recency_weight is None else recency_weight
+    activity_weight = ISSUE_ACTIVITY_WEIGHT if activity_weight is None else activity_weight
+    recency = _recency_factor(it, now=now, halflife_days=halflife_days)
+    activity = _issue_activity(it) / (max_activity or 1)
+    return recency_weight * recency + activity_weight * activity
+
+
+def _weighted_order(weighted: list[tuple[dict, float]]) -> list[dict]:
+    """Weighted-random ordering (Efraimidis–Spirakis): draw key = u**(1/w) per
+    item and sort descending. Higher weight tends to surface earlier, but the
+    draw keeps the order wandering so no issue is forever first."""
+    keyed = []
+    for obj, w in weighted:
+        u = _RNG.random() or 1e-12              # — avoid log(0)/0-key —
+        keyed.append((u ** (1.0 / max(w, 1e-9)), obj))
+    keyed.sort(key=lambda t: t[0], reverse=True)
+    return [obj for _, obj in keyed]
+
+
+def collect_issue_list(*, now: datetime = None) -> list[str]:
+    """Open issues, each formatted on its own, in a WEIGHTED-random order that
+    balances recency (soft exponential decay) against engagement (reactions,
+    comments, labels). Every issue still appears — the weighting only biases who
+    goes first — so no single issue is forever first and forever the only one
+    acted on, but fresh, active issues get their turn sooner."""
+    issues = _fetch_issues()
+    now = now or datetime.now(timezone.utc)
+    max_activity = max((_issue_activity(it) for it in issues), default=0)
+    weighted = [(it, issue_weight(it, now=now, max_activity=max_activity)) for it in issues]
+    return [_format_issue(it) for it in _weighted_order(weighted)]
 
 
 def _interleave(a: list, b: list) -> list:
