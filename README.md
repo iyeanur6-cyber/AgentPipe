@@ -8,7 +8,7 @@
 ![unenforcable legal boilerplate](https://img.shields.io/badge/license-MIT-blue)
 
 <p align="center">
-	<img src="logo.svg" width=200/>
+	<img src="./logo.svg" width=200/>
 </p>
 
 High performance, high velocity.
