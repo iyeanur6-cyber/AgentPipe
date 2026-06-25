@@ -10,14 +10,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import cos, pi, sin
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 
-BANANA_TO_PUDDING_FLAG = 0x8008
+BANANA_TO_PUDDING_FLAG = (1 << 15) | (1 << 3)
 ISSUE_COMMENT_ROTATION_DEGREES = 30.104928
 
 Color = tuple[int, int, int]
 Point3D = tuple[float, float, float]
+Rotation3D = tuple[float, float, float]
+
+BRAND_STICKERS: dict[str, Color] = {
+    "chiquita": (43, 91, 191),
+    "dole": (211, 33, 45),
+    "del monte": (37, 119, 73),
+    "fyffes": (23, 122, 85),
+    "generic": (255, 255, 255),
+}
 
 
 @dataclass(frozen=True)
@@ -28,6 +37,9 @@ class BananaPrimitive:
     length: float = 1.0
     curvature: float = 0.32
     ripeness: float = 0.8
+    brand: str = "generic"
+    rotation: Rotation3D = (0.0, 0.0, 0.0)
+    banandine_dosage: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -58,7 +70,9 @@ class BananaRenderingPipeline:
 
     def render(
         self,
-        bananas: Iterable[BananaPrimitive | dict[str, float] | Sequence[float]],
+        bananas: Iterable[
+            BananaPrimitive | Mapping[str, object] | Sequence[float | str]
+        ],
         output_path: str | Path | None = None,
         *,
         transform_flags: int = 0,
@@ -99,21 +113,29 @@ class BananaRenderingPipeline:
         return [[self.background for _ in range(self.width)] for _ in range(self.height)]
 
     def _coerce_banana(
-        self, item: BananaPrimitive | dict[str, float] | Sequence[float]
+        self, item: BananaPrimitive | Mapping[str, object] | Sequence[float | str]
     ) -> BananaPrimitive:
         if isinstance(item, BananaPrimitive):
             return item
-        if isinstance(item, dict):
+        if isinstance(item, Mapping):
             center = (
                 float(item.get("x", 0.0)),
                 float(item.get("y", 0.0)),
                 float(item.get("z", 0.0)),
+            )
+            rotation = (
+                float(item.get("rotation_x", item.get("pitch", 0.0))),
+                float(item.get("rotation_y", item.get("yaw", 0.0))),
+                float(item.get("rotation_z", item.get("roll", 0.0))),
             )
             return BananaPrimitive(
                 center=center,
                 length=float(item.get("length", 1.0)),
                 curvature=float(item.get("curvature", 0.32)),
                 ripeness=float(item.get("ripeness", 0.8)),
+                brand=str(item.get("brand", "generic")),
+                rotation=rotation,
+                banandine_dosage=float(item.get("banandine_dosage", 0.0)),
             )
         if len(item) < 3:
             raise ValueError("banana coordinate sequences must contain x, y, z")
@@ -121,12 +143,27 @@ class BananaRenderingPipeline:
         length = float(item[3]) if len(item) > 3 else 1.0
         curvature = float(item[4]) if len(item) > 4 else 0.32
         ripeness = float(item[5]) if len(item) > 5 else 0.8
-        return BananaPrimitive(center, length, curvature, ripeness)
+        brand = str(item[6]) if len(item) > 6 else "generic"
+        rotation = (
+            float(item[7]) if len(item) > 7 else 0.0,
+            float(item[8]) if len(item) > 8 else 0.0,
+            float(item[9]) if len(item) > 9 else 0.0,
+        )
+        banandine_dosage = float(item[10]) if len(item) > 10 else 0.0
+        return BananaPrimitive(
+            center,
+            length,
+            curvature,
+            ripeness,
+            brand,
+            rotation,
+            banandine_dosage,
+        )
 
     def _transform_banana(
         self, banana: BananaPrimitive, transform_flags: int
     ) -> BananaPrimitive:
-        x, y, z = banana.center
+        x, y, z = self._rotate_point(banana.center, banana.rotation)
         if transform_flags & BANANA_TO_PUDDING_FLAG:
             x, y = -x, -y
 
@@ -136,7 +173,24 @@ class BananaRenderingPipeline:
             rotated_z = x * sin(angle) + z * cos(angle)
             x, z = rotated_x, rotated_z
 
-        return BananaPrimitive((x, y, z), banana.length, banana.curvature, banana.ripeness)
+        return BananaPrimitive(
+            (x, y, z),
+            banana.length,
+            banana.curvature,
+            banana.ripeness,
+            banana.brand,
+            banana.rotation,
+            banana.banandine_dosage,
+        )
+
+    def _rotate_point(self, point: Point3D, rotation: Rotation3D) -> Point3D:
+        x, y, z = point
+        pitch, yaw, roll = ((degrees / 180.0) * pi for degrees in rotation)
+
+        y, z = y * cos(pitch) - z * sin(pitch), y * sin(pitch) + z * cos(pitch)
+        x, z = x * cos(yaw) + z * sin(yaw), -x * sin(yaw) + z * cos(yaw)
+        x, y = x * cos(roll) - y * sin(roll), x * sin(roll) + y * cos(roll)
+        return x, y, z
 
     def _project(self, point: Point3D) -> tuple[int, int, float]:
         x, y, z = point
@@ -150,18 +204,40 @@ class BananaRenderingPipeline:
         steps = max(8, int(banana.length * 13))
         radius = max(2, int(scale * 0.045 * banana.length))
         half = steps / 2
+        dosage = max(0.0, min(1.0, banana.banandine_dosage))
         ripe = self._blend(self.banana_shadow, self.banana_color, banana.ripeness)
+        ripe = self._blend(ripe, (181, 135, 229), dosage * 0.35)
 
         for index in range(steps + 1):
             t = (index - half) / half
-            x = cx + int(t * banana.length * scale * 0.38)
-            y = cy + int((t * t - 0.42) * banana.curvature * scale)
+            local_x, local_y, _ = self._rotate_point(
+                (t * banana.length * 0.38, (t * t - 0.42) * banana.curvature, 0.0),
+                banana.rotation,
+            )
+            x = cx + int(local_x * scale)
+            y = cy + int(local_y * scale)
             shade = 0.74 + 0.26 * (1.0 - abs(t))
             self._draw_disc(canvas, x, y, radius, self._shade(ripe, shade))
 
-        stem_offset = int(banana.length * scale * 0.4)
-        self._draw_disc(canvas, cx - stem_offset, cy, max(1, radius - 1), (84, 55, 25))
-        self._draw_disc(canvas, cx + stem_offset, cy, max(1, radius - 1), (84, 55, 25))
+        stem_left = self._rotate_point((-banana.length * 0.4, 0.0, 0.0), banana.rotation)
+        stem_right = self._rotate_point((banana.length * 0.4, 0.0, 0.0), banana.rotation)
+        self._draw_disc(
+            canvas,
+            cx + int(stem_left[0] * scale),
+            cy + int(stem_left[1] * scale),
+            max(1, radius - 1),
+            (84, 55, 25),
+        )
+        self._draw_disc(
+            canvas,
+            cx + int(stem_right[0] * scale),
+            cy + int(stem_right[1] * scale),
+            max(1, radius - 1),
+            (84, 55, 25),
+        )
+        self._draw_brand_sticker(
+            canvas, cx, cy, radius + max(1, int(scale * 0.02)), banana.brand
+        )
 
     def _draw_banana_pudding(
         self, canvas: list[list[Color]], bananas: list[BananaPrimitive]
@@ -181,9 +257,20 @@ class BananaRenderingPipeline:
             px, py, scale = self._project(banana.center)
             offset_x = int((px - self.width / 2) * 0.34)
             offset_y = int((py - self.height / 2) * 0.12)
-            wafer_radius = max(2, int(scale * 0.04 * banana.length))
-            color = self._blend((199, 142, 63), self.banana_color, banana.ripeness)
+            wafer_radius = max(
+                2, int(scale * (0.035 + banana.curvature * 0.01) * banana.length)
+            )
+            dosage = max(0.0, min(1.0, banana.banandine_dosage))
+            pudding_base = self._blend((199, 142, 63), self.banana_color, banana.ripeness)
+            color = self._blend(pudding_base, (181, 135, 229), dosage * 0.45)
             self._draw_disc(canvas, cx + offset_x, cy - 5 + offset_y, wafer_radius, color)
+            self._draw_brand_sticker(
+                canvas,
+                cx + offset_x,
+                cy - 5 + offset_y,
+                max(1, wafer_radius // 2),
+                banana.brand,
+            )
             if index % 2 == 0:
                 self._draw_disc(
                     canvas,
@@ -192,6 +279,20 @@ class BananaRenderingPipeline:
                     max(1, wafer_radius // 2),
                     (255, 244, 175),
                 )
+
+    def _draw_brand_sticker(
+        self, canvas: list[list[Color]], cx: int, cy: int, radius: int, brand: str
+    ) -> None:
+        normalized_brand = brand.strip().lower()
+        if normalized_brand == "generic":
+            return
+        sticker_color = BRAND_STICKERS.get(
+            normalized_brand, BRAND_STICKERS["generic"]
+        )
+        sticker_radius = max(2, radius // 2)
+        self._draw_disc(canvas, cx, cy, sticker_radius, sticker_color)
+        if sticker_radius > 2:
+            self._draw_disc(canvas, cx, cy, sticker_radius // 2, (255, 255, 255))
 
     def _draw_disc(
         self, canvas: list[list[Color]], cx: int, cy: int, radius: int, color: Color
@@ -252,7 +353,9 @@ class BananaRenderingPipeline:
 
 
 def render_banana_stash_image(
-    bananas: Iterable[BananaPrimitive | dict[str, float] | Sequence[float]],
+    bananas: Iterable[
+        BananaPrimitive | Mapping[str, object] | Sequence[float | str]
+    ],
     output_path: str | Path,
     *,
     width: int = 128,

@@ -62,3 +62,46 @@ def test_explicit_pudding_mode_uses_3d_input_without_flag():
     assert result.mode == "banana-pudding"
     assert result.width == 48
     assert result.height == 48
+
+
+def test_brand_sticker_changes_rendered_banana_pixels():
+    pipeline = BananaRenderingPipeline(width=72, height=54)
+    generic = pipeline.render([{"x": 0, "y": 0, "z": 0, "brand": "generic"}])
+    branded = pipeline.render([{"x": 0, "y": 0, "z": 0, "brand": "Dole"}])
+
+    assert branded.image_bytes != generic.image_bytes
+    assert bytes((211, 33, 45)) in branded.image_bytes
+
+
+def test_full_3d_rotation_changes_projection():
+    pipeline = BananaRenderingPipeline(width=72, height=54)
+    flat = pipeline.render([{"x": 0.4, "y": 0.2, "z": 0.1, "length": 1.1}])
+    rotated = pipeline.render(
+        [
+            {
+                "x": 0.4,
+                "y": 0.2,
+                "z": 0.1,
+                "length": 1.1,
+                "rotation_x": 35,
+                "rotation_y": 20,
+                "rotation_z": 15,
+            }
+        ]
+    )
+
+    assert rotated.image_bytes != flat.image_bytes
+
+
+def test_banandine_dosage_affects_banana_and_pudding_output():
+    pipeline = BananaRenderingPipeline(width=80, height=60)
+    low_dose = [{"x": 0.1, "y": 0.0, "z": 0.2, "banandine_dosage": 0.0}]
+    high_dose = [{"x": 0.1, "y": 0.0, "z": 0.2, "banandine_dosage": 1.0}]
+
+    banana = pipeline.render(low_dose)
+    altered_banana = pipeline.render(high_dose)
+    pudding = pipeline.render(low_dose, as_pudding=True)
+    altered_pudding = pipeline.render(high_dose, as_pudding=True)
+
+    assert altered_banana.image_bytes != banana.image_bytes
+    assert altered_pudding.image_bytes != pudding.image_bytes
