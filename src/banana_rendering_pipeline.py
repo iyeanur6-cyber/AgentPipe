@@ -206,8 +206,11 @@ class BananaRenderingPipeline:
         radius = max(2, int(scale * 0.045 * banana.length))
         half = steps / 2
         dosage = self._bananadine_intensity(banana.bananadine_grams)
-        ripe = self._blend(self.banana_shadow, self.banana_color, banana.ripeness)
-        ripe = self._blend(ripe, (181, 135, 229), dosage * 0.35)
+        ripeness_color = self._blend(
+            self.banana_shadow, self.banana_color, banana.ripeness
+        )
+        # Ripeness sets the base banana color; bananadine adds a dosage tint.
+        rendered_color = self._blend(ripeness_color, (181, 135, 229), dosage * 0.35)
 
         for index in range(steps + 1):
             t = (index - half) / half
@@ -218,7 +221,7 @@ class BananaRenderingPipeline:
             x = cx + int(local_x * scale)
             y = cy + int(local_y * scale)
             shade = 0.74 + 0.26 * (1.0 - abs(t))
-            self._draw_disc(canvas, x, y, radius, self._shade(ripe, shade))
+            self._draw_disc(canvas, x, y, radius, self._shade(rendered_color, shade))
 
         stem_left = self._rotate_point((-banana.length * 0.4, 0.0, 0.0), banana.rotation)
         stem_right = self._rotate_point((banana.length * 0.4, 0.0, 0.0), banana.rotation)
