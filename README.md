@@ -2,10 +2,10 @@
 
 ![urgent things to fix](https://img.shields.io/github/issues/sneakers-the-rat/ImportantCode)
 ![supply chain downstream users](https://img.shields.io/crates/dependents/tokio)
-![lines (should be >2 million)](https://sloc.xyz/github/sneakers-the-rat/ImportantCode?badge-bg-color=red)
-![singularity progress](https://img.shields.io/badge/agent_sentience-25%25-orange)
-![developer self worth](https://img.shields.io/github/stars/sneakers-the-rat/ImportantCode?style=flat)
-![unenforcable legal boilerplate](https://img.shields.io/badge/license-MIT-blue)
+![lines](https://sloc.xyz/github/sneakers-the-rat/ImportantCode?badge-bg-color=red)
+![progress](https://img.shields.io/badge/agent_sentience-25%25-orange)
+![importance(https://img.shields.io/github/stars/sneakers-the-rat/ImportantCode?style=flat)
+![license](https://img.shields.io/badge/license-MIT-blue)
 
 <p align="center">
 	<img src="./logo.svg" width=200/>
