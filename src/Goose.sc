@@ -2,13 +2,16 @@ Goose {
 	*honk {
 		var synths = Array.fill(74, {
 			{
-				var freq = ExpRand(400, 750) * LFNoise1.kr(ExpRand(8, 15)).range(0.92, 1.08);
-				var form = freq * ExpRand(1.8, 2.5);
-				var bw = ExpRand(150, 300);
-				var env = EnvGen.ar(Env.new([0, 1, 0.8, 0], [0.03, 0.08, ExpRand(0.1, 0.25)], \sine), doneAction: 2);
-				var sig = Formant.ar(freq, form, bw);
-				var noise = BPF.ar(WhiteNoise.ar(), freq, 0.3) * EnvGen.ar(Env.perc(0.01, 0.05));
-				(sig + noise) * env * 0.012;
+				var modFreq = ExpRand(120, 350);
+				var index = ExpRand(2, 6) * LFNoise1.kr(ExpRand(5, 12)).range(0.5, 1.5);
+				var modSig = SinOsc.ar(modFreq) * modFreq * index;
+				var carFreq = (ExpRand(350, 680) + modSig) * LFNoise2.kr(ExpRand(6, 15)).range(0.95, 1.05);
+				var env = EnvGen.ar(Env.new([0, 1, 0.7, 0.4, 0], [0.02, 0.05, 0.1, ExpRand(0.08, 0.2)], \sine), doneAction: 2);
+				var carSig = LFSaw.ar(carFreq);
+				var shaper = (carSig * ExpRand(1.5, 3.5)).tanh;
+				var finalSig = BPF.ar(shaper, carFreq * ExpRand(1.2, 2.2), 0.25);
+				var transient = HPF.ar(WhiteNoise.ar(), 2000) * EnvGen.ar(Env.perc(0.005, 0.03));
+				(finalSig + transient) * env * 0.01;
 			}.play;
 		});
 		^synths;
